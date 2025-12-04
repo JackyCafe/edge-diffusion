@@ -1,0 +1,13 @@
+# 這份清單會在容器建好後安裝
+numpy
+pandas
+matplotlib
+scipy
+scikit-learn
+opencv-python
+tqdm
+pyyaml
+tensorboard
+jupyterlab
+ipykernel
+torchinfo

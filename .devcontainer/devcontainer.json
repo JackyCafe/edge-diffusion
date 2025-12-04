@@ -1,0 +1,53 @@
+{
+  "name": "PyTorch DevContainer (no-compose)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+
+  // 重要：直接用 root，避免 useradd/groupadd 衝突
+  "remoteUser": "root",
+
+  // 啟用 GPU（若主機已安裝 nvidia-container-toolkit）：
+  // 沒裝或沒 GPU 也沒關係，容器仍會用 CPU 啟動。
+  "runArgs": ["--gpus", "all"],
+
+  "workspaceFolder": "/workspaces/edge-diffusion",
+  "workspaceMount": "source=/mnt/data/yhworkspace/edge-diffusion,target=/workspaces/edge-diffusion,type=bind,consistency=cached",
+// VS Code 內建終端機的預設 CWD
+  "settings": {
+    "terminal.integrated.cwd": "/workspaces/edge-diffusion"
+  }:
+
+  // 將遠端資料夾掛進容器：唯讀 /data/ai-model
+  "mounts": [
+    "source=/mnt/data/yhworkspace/edge-diffusion,target=/data/edge-diffusion,type=bind,consistency=cached,readonly",
+      // 新增：輸出可寫
+    "source=/mnt/data/yhworkspace/edge-diffusion,target=/data/outputs,type=bind,consistency=cached"
+
+  ],
+
+  "features": {},
+  "containerEnv": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "shutdownAction": "stopContainer"
+}

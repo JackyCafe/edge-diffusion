@@ -20,8 +20,7 @@ class DiffusionManager:
         return torch.randint(low=1, high=self.noise_steps, size=(n,), device=self.device)
 
     def sample(self, model, condition, n):
-        logging.info(f"Sampling {n} images...")
-        model.eval()
+        # model.eval() # 呼叫者負責切換模式，這裡不強制
         with torch.no_grad():
             x = torch.randn((n, 3, condition.shape[2], condition.shape[3])).to(self.device)
             for i in reversed(range(1, self.noise_steps)):
@@ -38,7 +37,7 @@ class DiffusionManager:
                     noise = torch.zeros_like(x)
 
                 x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * noise
-        model.train()
-        # Clip to [-1, 1] and Scale to [0, 1]
-        x = (x.clamp(-1, 1) + 1) / 2
+
+        # Clip to [-1, 1] for consistency with training data
+        x = x.clamp(-1, 1)
         return x

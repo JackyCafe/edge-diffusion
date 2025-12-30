@@ -1,1 +1,6 @@
 datasets/img
+datasets/
+samples/
+checkpoints/
+images_satge1/
+samples_stage2/

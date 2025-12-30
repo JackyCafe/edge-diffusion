@@ -3,215 +3,239 @@ import torch.nn as nn
 import torch.nn.utils.spectral_norm as spectral_norm
 import math
 
-class BaseBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, kernel=4, stride=2, padding=1, activ='relu', norm='instance'):
-        super(BaseBlock, self).__init__()
-        self.conv = nn.Conv2d(in_ch, out_ch, kernel,
-                         stride, padding=padding, bias=False)
-
-        if norm == 'instance':
-            self.norm = nn.InstanceNorm2d(out_ch)
-        elif norm == 'batch':
-            self.norm = nn.BatchNorm2d(out_ch)
-        else:
-            self.norm = nn.Identity()
-
-        if activ == 'lrelu':
-            self.act = nn.LeakyReLU(0.2, inplace=True)
-        elif activ == 'relu':
-            self.act = nn.ReLU(inplace=True)
-        else:
-            self.act = nn.Identity()
-
-
+# ==========================================
+#        共用組件
+# ==========================================
+class BaseConv(nn.Module):
+    def __init__(self, in_ch, out_ch, kernel=4, stride=2, padding=1, activ='lrelu', norm='instance'):
+        super().__init__()
+        self.conv = nn.Conv2d(in_ch, out_ch, kernel, stride, padding, bias=False)
+        self.norm = nn.InstanceNorm2d(out_ch) if norm == 'instance' else nn.Identity()
+        self.act = nn.LeakyReLU(0.2, inplace=True) if activ == 'lrelu' else nn.ReLU(inplace=True)
 
     def forward(self, x):
         return self.act(self.norm(self.conv(x)))
 
 class ResBlock(nn.Module):
-    def __init__(self, dim,dilation=1):
-        super(ResBlock, self).__init__()
+    def __init__(self, dim, dilation=1):
+        super().__init__()
         self.block = nn.Sequential(
             nn.ReflectionPad2d(dilation),
-            nn.Conv2d(dim, dim, kernel_size=3,stride=1, padding=0, dilation=dilation),
-            nn.InstanceNorm2d((dim)),
-            nn.ReLU(inplace=True),
-            nn.ReflectionPad2d(dilation),
-            nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=0, dilation=dilation),
+            nn.Conv2d(dim, dim, 3, 1, 0, dilation=dilation),
             nn.InstanceNorm2d(dim),
-
+            nn.ReLU(inplace=True),
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(dim, dim, 3, 1, 0, dilation=1),
+            nn.InstanceNorm2d(dim)
         )
-
     def forward(self, x):
         return x + self.block(x)
 
 # ==========================================
-#  Stage 1: G1 (Edge Generator) & D1
+#  Stage 1: G1 (Edge Generator)
 # ==========================================
-
 class EdgeGenerator(nn.Module):
-    """
-        Input: RGB Image (3) + Mask (1) = 4 channels (Masked Image)
-        Output: Edge Map (1)
-    """
-    def __init__(self, in_ch=4, n_res_blocks=8):
-        super(EdgeGenerator, self).__init__()
-
+    def __init__(self, input_channels=4, residual_blocks=8):
+        super().__init__()
+        # Encoder
         self.encoder = nn.Sequential(
             nn.ReflectionPad2d(3),
-            BaseBlock(in_ch, 64, kernel=7, stride=1, padding=0, activ='relu'),
-            BaseBlock(64, 128,stride=2, activ='relu'),
-            BaseBlock(128, 256,stride=2, activ='relu')
+            BaseConv(input_channels, 64, kernel=7, stride=1, padding=0, activ='relu'),
+            BaseConv(64, 128, stride=2, activ='relu'),
+            BaseConv(128, 256, stride=2, activ='relu')
         )
-        blocks = []
-        for _ in range(n_res_blocks):
-            blocks.append(ResBlock(256,2))
-        self.middle = nn.Sequential(*blocks)
+        # Bottleneck
+        self.middle = nn.Sequential(*[ResBlock(256, dilation=2) for _ in range(residual_blocks)])
+        # Decoder
         self.decoder = nn.Sequential(
-            nn.Upsample(scale_factor=2),
-            BaseBlock(256, 128, kernel=3, stride=1, padding=1, activ='relu'),
-            nn.Upsample(scale_factor=2),
-            BaseBlock(128, 64, kernel=3, stride=1, padding=1, activ='relu'),
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(64, 1, kernel_size=7, stride=1, padding=0),
-            nn.Sigmoid()
+            nn.Upsample(scale_factor=2), BaseConv(256, 128, kernel=3, stride=1, padding=1, activ='relu'),
+            nn.Upsample(scale_factor=2), BaseConv(128, 64, kernel=3, stride=1, padding=1, activ='relu'),
+            nn.ReflectionPad2d(3), nn.Conv2d(64, 1, kernel_size=7, stride=1, padding=0), nn.Sigmoid()
         )
     def forward(self, x):
-        x = self.encoder(x)
-        x = self.middle(x)
-        x = self.decoder(x)
-        return x
+        return self.decoder(self.middle(self.encoder(x)))
 
+# ==========================================
+#  Stage 1: D1 (Edge Discriminator)
+# ==========================================
 class EdgeDiscriminator(nn.Module):
-    """
-        Input: Edge Map (1)
-        Output: Patch Real/Fake Prediction
-    """
-    def __init__(self, in_ch=1):
-        super(EdgeDiscriminator, self).__init__()
+    def __init__(self, input_channels=3):
+        super().__init__()
+        ndf = 64
         self.model = nn.Sequential(
-            spectral_norm(nn.Conv2d(in_ch, 64, kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, inplace=True),
-
-            spectral_norm(nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(128),
-            nn.LeakyReLU(0.2, inplace=True),
-
-            spectral_norm(nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(256),
-            nn.LeakyReLU(0.2, inplace=True),
-
-            spectral_norm(nn.Conv2d(256, 512, kernel_size=4, stride=1, padding=1)),
-            nn.InstanceNorm2d(512),
-            nn.LeakyReLU(0.2, inplace=True),
-
-            spectral_norm(nn.Conv2d(512, 1, kernel_size=4, stride=1, padding=1))
+            spectral_norm(nn.Conv2d(input_channels, ndf, 4, 2, 1)), nn.LeakyReLU(0.2, True),
+            spectral_norm(nn.Conv2d(ndf, ndf*2, 4, 2, 1)), nn.LeakyReLU(0.2, True),
+            spectral_norm(nn.Conv2d(ndf*2, ndf*4, 4, 2, 1)), nn.LeakyReLU(0.2, True),
+            spectral_norm(nn.Conv2d(ndf*4, ndf*8, 4, 1, 1)), nn.LeakyReLU(0.2, True),
+            nn.Conv2d(ndf*8, 1, 4, 1, 1)
         )
-
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, x): return self.model(x)
 
 
-# ==========================================
-#  Stage 2: G2 (Diffusion U-Net)
-# ==========================================
 
+#=============================================
+# Time Embedding
+
+#=============================================
 class TimeEmbedding(nn.Module):
-    def __init__(self, dim):
-        super(TimeEmbedding, self).__init__()
+    def __init__(self, dim, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.dim = dim
 
     def forward(self, time):
         device = time.device
-        half_dim = self.dim // 2
+        half_dim = self.dim//2
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
+        # 生成相位 (time * emb):將時間 t 與這些頻率相乘。
+        # 這意味著對於同一個 t，低維度索引對應高頻，高維度索引對應低頻。
         emb = time[:, None] * emb[None, :]
+        #正餘弦變換 (sin, cos):將結果通過 sin 和 cos 映射。
+        # 最終輸出維度為 [batch_size, dim]（即 half_dim * 2）
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
 
-class DiffBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, time_emb_dim, up=False):
-        super().__init__()
-        self.time_mlp = nn.Linear(time_emb_dim, out_ch)
-        if up:
-            self.conv1 = nn.Sequential(
-                nn.Upsample(scale_factor=2),
-                nn.Conv2d(2*in_ch, out_ch, 3, padding=1)
-            )
-        else:
-            self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1, stride=2)
 
-        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_ch)
-        self.bn2 = nn.BatchNorm2d(out_ch)
-        self.act = nn.SiLU() # Swish activation is common in Diffusion
+
+
+"""
+這是一個典型的 Diffusion Block 實作，它結合了影像特徵提取與時間編碼（Time Embedding）的注入。
+這種設計是擴散模型（如 DDPM 或 Stable Diffusion）能夠在不同時間步（$t$）生成不同效果的核心。
+"""
+
+import torch
+import torch.nn as nn
+
+class DiffBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, time_emb_dim, mode=None):
+        """
+        mode:
+          - None: 保持尺寸不變 (用於 Middle Block 或 一般層)
+          - "down": 下採樣 (尺寸 / 2)
+          - "up": 上採樣 (尺寸 * 2)
+        """
+        super().__init__()
+
+        # 1. 時間嵌入映射
+        self.time_mlp = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(time_emb_dim, out_ch)
+        )
+
+        # 2. 尺寸變換層
+        if mode == "down":
+            self.resample = nn.Conv2d(in_ch, in_ch, kernel_size=3, stride=2, padding=1)
+        elif mode == "up":
+            self.resample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        else:
+            self.resample = nn.Identity()
+
+        # 3. 主卷積路徑
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
+            nn.GroupNorm(8, out_ch),
+            nn.SiLU()
+        )
+
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
+            nn.GroupNorm(8, out_ch),
+            nn.SiLU()
+        )
+
+        # 4. 殘差連接 (如果輸入輸出通道不同，需用 1x1 Conv 對齊)
+        self.shortcut = nn.Conv2d(in_ch, out_ch, kernel_size=1) if in_ch != out_ch else nn.Identity()
 
     def forward(self, x, t):
-        h = self.act(self.bn1(self.conv1(x)))
-        time_emb = self.act(self.time_mlp(t))
-        h = h + time_emb[(..., ) + (None, ) * 2]
-        h = self.act(self.bn2(self.conv2(h)))
-        return h
+        # A. 先調整空間尺寸 (Up / Down / Keep)
+        x = self.resample(x)
+
+        # B. 第一層卷積
+        h = self.conv1(x)
+
+        # C. 注入時間編碼 [B, C] -> [B, C, 1, 1]
+        time_emb = self.time_mlp(t)[:, :, None, None]
+        h = h + time_emb
+
+        # D. 第二層卷積
+        h = self.conv2(h)
+
+        # E. 殘差相加
+        return h + self.shortcut(x)
+
+
+
+
+#================================================
+# DiffusionUNet
+#================================================
+
 
 class DiffusionUNet(nn.Module):
-    def __init__(self):
+    def __init__(self, in_channels=8, out_channels=3, time_dim=256):
         super().__init__()
-        # Config
-        time_dim = 256
-        # Input Channels calculation:
-        # Noisy Image (3) + Masked Image (3) + Mask (1) + Generated Edge (1) = 8
-        in_channels = 8
-        out_channels = 3
+        self.time_dim = time_dim
 
+        # 1. 補上缺失的時間嵌入層 (Time MLP)
         self.time_mlp = nn.Sequential(
-            TimeEmbedding(time_dim),
+            TimeEmbedding(dim=time_dim),
             nn.Linear(time_dim, time_dim),
             nn.SiLU(),
             nn.Linear(time_dim, time_dim),
         )
 
-        # Initial Projection
-        self.inc = nn.Conv2d(in_channels, 64, 3, padding=1)
+        # 2. Encoder (Downsampling 路徑)
+        # Input: RGB(3) + Masked_Img(3) + Mask(1) + Edge(1) = 8
+        self.inc = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
+        self.down1 = DiffBlock(64, 128, self.time_dim, mode="down")  # 512 -> 256
+        self.down2 = DiffBlock(128, 256, self.time_dim, mode="down") # 256 -> 128
+        self.down3 = DiffBlock(256, 512, self.time_dim, mode="down") # 128 -> 64
+        self.down4 = DiffBlock(512, 512, self.time_dim, mode="down") # 64 -> 32
 
-        # Down
-        self.down1 = DiffBlock(64, 128, time_dim)
-        self.down2 = DiffBlock(128, 256, time_dim)
-        self.down3 = DiffBlock(256, 512, time_dim)
-        self.down4 = DiffBlock(512, 512, time_dim)
+        # 3. Middle (Bottleneck)
+        self.mid = DiffBlock(512, 512, self.time_dim, mode=None)     # 保持 32x32
 
-        # Up
-        self.up1 = DiffBlock(512, 256, time_dim, up=True)
-        self.up2 = DiffBlock(256, 128, time_dim, up=True)
-        self.up3 = DiffBlock(128, 64, time_dim, up=True)
+        # 4. Decoder (Upsampling 路徑)
+        # 注意: in_ch 必須包含 cat 之後的通道數
+        self.up1 = DiffBlock(1024, 512, self.time_dim, mode="up")    # 32 -> 64
+        self.up2 = DiffBlock(1024, 256, self.time_dim, mode="up")    # 64 -> 128
+        self.up3 = DiffBlock(512, 128, self.time_dim, mode="up")     # 128 -> 256
+        self.up4 = DiffBlock(256, 64, self.time_dim, mode="up")      # 256 -> 512
 
+        # 5. Final Output
+        # 這裡拼接最初的 inc 特徵 (64 + 64 = 128)
         self.outc = nn.Sequential(
-            nn.Upsample(scale_factor=2),
-            nn.Conv2d(128, 64, 3, padding=1), # 64 from up3 + 64 from inc
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
             nn.SiLU(),
-            nn.Conv2d(64, out_channels, 1)
+            nn.Conv2d(64, out_channels, kernel_size=1)
         )
 
     def forward(self, x, t, condition):
-        # x: Noisy [B,3,H,W], condition: [B,5,H,W]
-        t = self.time_mlp(t)
-        x = torch.cat([x, condition], dim=1) # Concatenate condition
+        # x: [B, 3, 512, 512] (含有雜訊的影像)
+        # t: [B] (時間步數)
+        # condition: [B, 5, 512, 512]
 
+        # A. 先計算時間嵌入向量
+        t_emb = self.time_mlp(t)
+
+        # B. 將雜訊影像與條件拼接
+        x = torch.cat([x, condition], dim=1) # [B, 8, 512, 512]
+
+        # C. Encoder
         x1 = self.inc(x)
-        x2 = self.down1(x1, t)
-        x3 = self.down2(x2, t)
-        x4 = self.down3(x3, t)
-        x5 = self.down4(x4, t)
+        x2 = self.down1(x1, t_emb)
+        x3 = self.down2(x2, t_emb)
+        x4 = self.down3(x3, t_emb)
+        x5 = self.down4(x4, t_emb)
 
-        x = self.up1(x5, t)
-        x = torch.cat([x, x4], dim=1) # Skip connection logic needs careful alignment
-        # Note: Simplified U-Net, actual implementation needs proper skips
-        # Let's fix the skips logic simply:
+        # D. Middle
+        m = self.mid(x5, t_emb)
 
-        # Re-forward with proper skips:
-        # (Simplified for brevity, assume dimensions match)
-        # In real implementation, keep track of `x1`, `x2` etc. for concatenation
+        # E. Decoder with Skip Connections (拼接對應層級的特徵)
+        x = self.up1(torch.cat([m, x5], dim=1), t_emb)
+        x = self.up2(torch.cat([x, x4], dim=1), t_emb)
+        x = self.up3(torch.cat([x, x3], dim=1), t_emb)
+        x = self.up4(torch.cat([x, x2], dim=1), t_emb)
 
-        return self.outc(torch.cat([x, x1], dim=1)) # Placeholder logic
-        # *注意*: 這裡為了代碼長度簡化了 Up block 的 skip connection 處理
-        # 實際訓練建議使用更標準的 U-Net 寫法連接 x4, x3, x2
+        # F. Final output
+        return self.outc(torch.cat([x, x1], dim=1))

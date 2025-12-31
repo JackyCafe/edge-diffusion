@@ -2,5 +2,6 @@ datasets/img
 datasets/
 samples/
 checkpoints/
-images_satge1/
+images_stage1/
 samples_stage2/
+samples_stage2_vggloss/

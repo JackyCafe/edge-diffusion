@@ -35,25 +35,71 @@ class ResBlock(nn.Module):
 #  Stage 1: G1 (Edge Generator)
 # ==========================================
 class EdgeGenerator(nn.Module):
-    def __init__(self, input_channels=4, residual_blocks=8):
+    def __init__(self, input_channels=4, residual_blocks=12): # 增加殘差塊到 12 個
         super().__init__()
-        # Encoder
+
+        # Encoder: 使用 Spectral Norm 增加穩定性
         self.encoder = nn.Sequential(
             nn.ReflectionPad2d(3),
-            BaseConv(input_channels, 64, kernel=7, stride=1, padding=0, activ='relu'),
-            BaseConv(64, 128, stride=2, activ='relu'),
-            BaseConv(128, 256, stride=2, activ='relu')
+            spectral_norm(nn.Conv2d(input_channels, 64, kernel_size=7, stride=1, padding=0)),
+            nn.InstanceNorm2d(64),
+            nn.ReLU(inplace=True),
+
+            spectral_norm(nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1)),
+            nn.InstanceNorm2d(128),
+            nn.ReLU(inplace=True),
+
+            spectral_norm(nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1)),
+            nn.InstanceNorm2d(256),
+            nn.ReLU(inplace=True)
         )
-        # Bottleneck
-        self.middle = nn.Sequential(*[ResBlock(256, dilation=2) for _ in range(residual_blocks)])
+
+        # Middle: 增加感受野 (Dilation 混合 2 與 4)
+        blocks = []
+        for i in range(residual_blocks):
+            # 讓一半的層級使用更大的 Dilation (4)，以擴大感受野
+            d_rate = 4 if i % 2 == 0 else 2
+            blocks.append(ResBlockWithSN(256, dilation=d_rate))
+        self.middle = nn.Sequential(*blocks)
+
         # Decoder
         self.decoder = nn.Sequential(
-            nn.Upsample(scale_factor=2), BaseConv(256, 128, kernel=3, stride=1, padding=1, activ='relu'),
-            nn.Upsample(scale_factor=2), BaseConv(128, 64, kernel=3, stride=1, padding=1, activ='relu'),
-            nn.ReflectionPad2d(3), nn.Conv2d(64, 1, kernel_size=7, stride=1, padding=0), nn.Sigmoid()
+            nn.Upsample(scale_factor=2),
+            spectral_norm(nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)),
+            nn.InstanceNorm2d(128),
+            nn.ReLU(inplace=True),
+
+            nn.Upsample(scale_factor=2),
+            spectral_norm(nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1)),
+            nn.InstanceNorm2d(64),
+            nn.ReLU(inplace=True),
+
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(64, 1, kernel_size=7, stride=1, padding=0),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.middle(x)
+        return self.decoder(x)
+
+# 配合 Spectral Norm 的殘差塊實作
+class ResBlockWithSN(nn.Module):
+    def __init__(self, dim, dilation=1):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.ReflectionPad2d(dilation),
+            spectral_norm(nn.Conv2d(dim, dim, 3, 1, 0, dilation=dilation)),
+            nn.InstanceNorm2d(dim),
+            nn.ReLU(inplace=True),
+
+            nn.ReflectionPad2d(1),
+            spectral_norm(nn.Conv2d(dim, dim, 3, 1, 0, dilation=1)),
+            nn.InstanceNorm2d(dim)
         )
     def forward(self, x):
-        return self.decoder(self.middle(self.encoder(x)))
+        return x + self.block(x)
 
 # ==========================================
 #  Stage 1: D1 (Edge Discriminator)
@@ -62,15 +108,34 @@ class EdgeDiscriminator(nn.Module):
     def __init__(self, input_channels=3):
         super().__init__()
         ndf = 64
-        self.model = nn.Sequential(
-            spectral_norm(nn.Conv2d(input_channels, ndf, 4, 2, 1)), nn.LeakyReLU(0.2, True),
-            spectral_norm(nn.Conv2d(ndf, ndf*2, 4, 2, 1)), nn.LeakyReLU(0.2, True),
-            spectral_norm(nn.Conv2d(ndf*2, ndf*4, 4, 2, 1)), nn.LeakyReLU(0.2, True),
-            spectral_norm(nn.Conv2d(ndf*4, ndf*8, 4, 1, 1)), nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf*8, 1, 4, 1, 1)
+        # 將原本的 Sequential 拆解，以便提取中間層
+        self.layer1 = nn.Sequential(
+            spectral_norm(nn.Conv2d(input_channels, ndf, 4, 2, 1)),
+            nn.LeakyReLU(0.2, True)
         )
-    def forward(self, x): return self.model(x)
+        self.layer2 = nn.Sequential(
+            spectral_norm(nn.Conv2d(ndf, ndf*2, 4, 2, 1)),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.layer3 = nn.Sequential(
+            spectral_norm(nn.Conv2d(ndf*2, ndf*4, 4, 2, 1)),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.layer4 = nn.Sequential(
+            spectral_norm(nn.Conv2d(ndf*4, ndf*8, 4, 1, 1)),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.layer5 = nn.Conv2d(ndf*8, 1, 4, 1, 1)
 
+    def forward(self, x):
+        feat = []
+        x = self.layer1(x); feat.append(x)
+        x = self.layer2(x); feat.append(x)
+        x = self.layer3(x); feat.append(x)
+        x = self.layer4(x); feat.append(x)
+        x = self.layer5(x)
+        # 回傳最後結果與中間層特徵列表
+        return x, feat
 
 
 #=============================================

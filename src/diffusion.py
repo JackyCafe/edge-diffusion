@@ -1,5 +1,4 @@
 import torch
-import logging
 
 class DiffusionManager:
     def __init__(self, device="cuda", noise_steps=1000, beta_start=1e-4, beta_end=0.02):
@@ -20,24 +19,30 @@ class DiffusionManager:
         return torch.randint(low=1, high=self.noise_steps, size=(n,), device=self.device)
 
     def sample(self, model, condition, n):
-        # model.eval() # 呼叫者負責切換模式，這裡不強制
+        model.eval()
         with torch.no_grad():
+            # 修正處：確保 x 是 3 通道 RGB
             x = torch.randn((n, 3, condition.shape[2], condition.shape[3])).to(self.device)
-            for i in reversed(range(1, self.noise_steps)):
+
+            # 從 T-1 迭代到 0
+            for i in reversed(range(0, self.noise_steps)):
                 t = (torch.ones(n) * i).long().to(self.device)
+
+                # 這裡 model 內部會將 3 通道的 x 與 5 通道的 condition 拼接成 8 通道
                 predicted_noise = model(x, t, condition)
 
                 alpha = self.alpha[t][:, None, None, None]
                 alpha_hat = self.alpha_hat[t][:, None, None, None]
                 beta = self.beta[t][:, None, None, None]
 
-                if i > 1:
+                if i > 0:
                     noise = torch.randn_like(x)
                 else:
                     noise = torch.zeros_like(x)
 
+                # DDPM 標準採樣公式
                 x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * noise
 
-        # Clip to [-1, 1] for consistency with training data
-        x = x.clamp(-1, 1)
-        return x
+        model.train()
+        # 限制在 [-1, 1] 確保與訓練資料分布一致
+        return x.clamp(-1, 1)

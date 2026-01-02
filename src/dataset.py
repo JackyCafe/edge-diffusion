@@ -5,6 +5,7 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms
 from PIL import Image
+import math
 
 class InpaintingDataset(Dataset):
     def __init__(self, root_dir, mode='train', img_size=512):
@@ -41,9 +42,19 @@ class InpaintingDataset(Dataset):
         return len(self.files)
 
     def load_edge(self, img):
-        # RGB -> Gray -> Canny Edge Detection
+        # 1. RGB 轉 灰階
         img_gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-        edges = cv2.Canny(img_gray, 100, 200)
+
+        # 2. 設定 Sigma 並進行高斯模糊 (Gaussian Blur)
+        sigma = 2.5
+        # 根據 Sigma 自動計算 Kernel Size (通常設為 6*sigma + 1)
+        k_size = int(2 * math.ceil(3 * sigma) + 1)
+        img_blur = cv2.GaussianBlur(img_gray, (k_size, k_size), sigma)
+
+        # 3. 執行 Canny 邊緣檢測
+        # 這裡使用您原本設定的閥值 100, 200
+        edges = cv2.Canny(img_blur, 50, 150)
+
         edges = Image.fromarray(edges)
         return edges
 

@@ -13,7 +13,7 @@ from src.networks import EdgeGenerator, DiffusionUNet
 from src.diffusion import DiffusionManager
 from src.dataset import InpaintingDataset
 
-# ================= CONFIG =================
+# ================= CONFIG (最終收斂版) =================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 LR = 2e-5
 EPOCHS = 100
@@ -24,17 +24,17 @@ SAVE_DIR = "checkpoints_stage2"
 SAMPLE_DIR = "samples_stage2_results"
 LOG_DIR = "runs/stage2_attention_final"
 
-# 載入您最新的高品質 G1 權重
+# 使用您最新的 IoU 峰值權重 (Epoch 75/80)
 G1_CHECKPOINT = "./checkpoints/G1_epoch_80.pth"
 
 W_RECON = 1.0
 W_VGG = 0.1
-# ==========================================
+# =====================================================
 
 def calculate_psnr(pred, target):
-    """ 修正 PSNR 計算基準 """
-    p = (pred.detach() + 1.0) / 2.0
-    t = (target.detach() + 1.0) / 2.0
+    """ 修正版 PSNR：確保數值在 [0, 1] 範圍計算 """
+    p = (pred.detach() + 1) / 2
+    t = (target.detach() + 1) / 2
     mse = torch.mean((p - t) ** 2)
     if mse == 0: return 100.0
     return 20 * torch.log10(1.0 / torch.sqrt(mse))
@@ -67,10 +67,10 @@ def train():
     train_dataset = InpaintingDataset("./datasets/img", mode='train')
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
 
-    # 模型初始化
+    # 初始化 G1 與 G2
     G1 = EdgeGenerator().to(DEVICE)
     if os.path.exists(G1_CHECKPOINT):
-        print(f"[*] Loading Stable G1 Guide: {G1_CHECKPOINT}")
+        print(f"[*] Loading High-Quality G1 Guide from {G1_CHECKPOINT}")
         G1.load_state_dict(torch.load(G1_CHECKPOINT, map_location=DEVICE))
     G1.eval()
 
@@ -85,6 +85,7 @@ def train():
     for epoch in range(EPOCHS):
         G2.train()
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
+        epoch_psnr = []
 
         for i, (imgs, _, masks) in enumerate(pbar):
             imgs, masks = imgs.to(DEVICE), masks.to(DEVICE)
@@ -101,6 +102,7 @@ def train():
                 predicted_noise = G2(x_t, t, condition)
                 loss_mse_val = mse_loss(predicted_noise, noise)
 
+                # 推導 x0 計算損失與 PSNR
                 alpha_hat = diffusion.alpha_hat[t][:, None, None, None]
                 pred_x0 = (x_t - torch.sqrt(1 - alpha_hat) * predicted_noise) / torch.sqrt(alpha_hat)
                 pred_x0 = torch.clamp(pred_x0, -1, 1)
@@ -115,34 +117,34 @@ def train():
                 scaler.update()
                 opt.zero_grad()
 
+            current_psnr = calculate_psnr(pred_x0, imgs).item()
+            epoch_psnr.append(current_psnr)
+
             if i % 20 == 0:
-                cur_psnr = calculate_psnr(pred_x0, imgs).item()
                 global_step = epoch * len(train_loader) + i
                 writer.add_scalar('Loss/MSE', loss_mse_val.item(), global_step)
-                writer.add_scalar('Metrics/PSNR', cur_psnr, global_step)
-                pbar.set_postfix({"PSNR": f"{cur_psnr:.2f}dB"})
+                writer.add_scalar('Metrics/PSNR', current_psnr, global_step)
+                pbar.set_postfix({"PSNR": f"{current_psnr:.2f}dB"})
 
-        # === 視覺化與採樣修正 (解決黑塊問題) ===
+        # === 驗證與繪圖 (解決黑塊關鍵) ===
         G2.eval()
         with torch.no_grad():
             sample_condition = condition[0:1]
-            # 執行 1000 步採樣
             samples = diffusion.sample(G2, sample_condition, n=1)
             final_res = imgs[0:1] * (1 - masks[0:1]) + samples * masks[0:1]
 
-            # 強制轉換與裁切處理
-            res_raw = final_res[0].cpu().permute(1, 2, 0).numpy()
-            res_to_show = (res_raw + 1.0) / 2.0
-            res_to_show = np.clip(res_to_show, 0.0, 1.0)
+            # 數值轉換與裁切
+            res_np = (final_res[0].cpu().permute(1, 2, 0).numpy() + 1.0) / 2.0
+            res_np = np.clip(res_np, 0, 1)
 
             fig, axes = plt.subplots(1, 4, figsize=(20, 5))
             axes[0].imshow((imgs[0].cpu().permute(1, 2, 0) + 1) / 2); axes[0].set_title("Original")
             axes[1].imshow((masked_imgs[0].cpu().permute(1, 2, 0) + 1) / 2); axes[1].set_title("Input")
             axes[2].imshow(pred_edges[0, 0].cpu(), cmap='gray'); axes[2].set_title("G1 Edge")
-            axes[3].imshow(res_to_show); axes[3].set_title(f"Result ({cur_psnr:.2f}dB)")
+            axes[3].imshow(res_np); axes[3].set_title(f"Result ({current_psnr:.2f}dB)")
 
             plt.savefig(f"{SAMPLE_DIR}/epoch_{epoch}.png")
-            writer.add_image('Visual/Comparison', res_to_show.transpose(2, 0, 1), epoch)
+            writer.add_image('Visual/Result', res_np.transpose(2, 0, 1), epoch)
             plt.close()
 
         torch.save(G2.state_dict(), f"{SAVE_DIR}/G2_latest.pth")

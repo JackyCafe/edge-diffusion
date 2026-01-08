@@ -13,16 +13,16 @@ from src.utils import compute_psnr, save_sample_images
 #                CONFIG 設定
 # =========================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-LR = 1e-6
+LR = 2e-5
 EPOCHS = 200
 BATCH_SIZE = 16
 SAVE_DIR = "checkpoints"
 SAMPLE_DIR = "images_stage1"
 
 # 損失權重 (參考論文設定)
-W_ADV = 1.0     # 對抗損失權重
-W_FM = 20.0     # Feature Matching 權重
-W_PIXEL = 10.0  # 像素級 L1 權重
+W_ADV = 2.0     # 對抗損失權重
+W_FM = 50.0     # Feature Matching 權重
+W_PIXEL = 20.0  # 像素級 L1 權重
 
 def validate(model, loader):
     """驗證集評估函數"""

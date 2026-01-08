@@ -46,26 +46,43 @@ class InpaintingDataset(Dataset):
         img_gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
 
         # 2. 設定 Sigma 並進行高斯模糊 (Gaussian Blur)
-        sigma = 2.5
+        sigma = 1
         # 根據 Sigma 自動計算 Kernel Size (通常設為 6*sigma + 1)
         k_size = int(2 * math.ceil(3 * sigma) + 1)
         img_blur = cv2.GaussianBlur(img_gray, (k_size, k_size), sigma)
 
         # 3. 執行 Canny 邊緣檢測
         # 這裡使用您原本設定的閥值 100, 200
-        edges = cv2.Canny(img_blur, 50, 150)
+        v = np.median(img_blur)
+        lower = int(max(0, (1.0 - 0.33) * v))
+        upper = int(min(255, (1.0 + 0.33) * v))
+        edges = cv2.Canny(img_blur, lower//2, upper//2)
+        # edges = cv2.Canny(img_blur, 50, 150)
 
         edges = Image.fromarray(edges)
         return edges
 
-    def load_mask(self, height, width,h_hole=64,w_hole=64):
+    def load_mask(self, height, width,h_hole=200,w_hole=32):
         mask = np.zeros((height, width), dtype=np.uint8)
         # 隨機矩形遮罩
         # h_hole = np.random.randint(height // 4, height // 2)
         # w_hole = np.random.randint(width // 4, width // 2)
-        y = 320
-        x = 320
+        y = 50
+        x = 100
         mask[y:y+h_hole, x:x+w_hole] = 1
+
+        y = 50
+        x = 200
+        mask[y:y+h_hole, x:x+w_hole] = 1
+
+        y = 200
+        x = 50
+        mask[y:y+w_hole, x:x+h_hole] = 1
+
+        y = 300
+        x = 50
+        mask[y:y+w_hole, x:x+h_hole] = 1
+
         return torch.from_numpy(mask).unsqueeze(0).float() # [1, H, W]
 
     def __getitem__(self, index):

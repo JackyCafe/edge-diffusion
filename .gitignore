@@ -2,7 +2,14 @@ datasets/img
 datasets/
 samples/
 checkpoints/
-images_stage1/
+diffusion_result
+images_stage1_sa/
 samples_stage2/
 samples_stage2_vggloss/
 samples_stage2_results/
+64/checkpoints_stage2
+diffusion_result.zip
+runs
+checkpoints_stage2/
+*.zip
+*.pth

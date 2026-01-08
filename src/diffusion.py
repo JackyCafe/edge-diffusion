@@ -18,31 +18,35 @@ class DiffusionManager:
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.noise_steps, size=(n,), device=self.device)
 
-    def sample(self, model, condition, n):
+    def sample(self, model, condition, n, steps=50):
+        """
+        支援 DDIM 快速採樣邏輯
+        steps: 採樣疊代步數。
+        """
         model.eval()
         with torch.no_grad():
-            # 修正處：確保 x 是 3 通道 RGB
+            # 初始噪聲
             x = torch.randn((n, 3, condition.shape[2], condition.shape[3])).to(self.device)
 
-            # 從 T-1 迭代到 0
-            for i in reversed(range(0, self.noise_steps)):
-                t = (torch.ones(n) * i).long().to(self.device)
+            # 定義 DDIM 跳步序列
+            times = torch.linspace(self.noise_steps - 1, 0, steps + 1).long().to(self.device)
 
-                # 這裡 model 內部會將 3 通道的 x 與 5 通道的 condition 拼接成 8 通道
+            for i in range(steps):
+                # 修正處：確保 torch.ones(n) 在建立時即指定 device
+                t = (torch.ones(n, device=self.device) * times[i]).long()
+                t_next = (torch.ones(n, device=self.device) * times[i+1]).long()
+
+                # 預測噪聲
                 predicted_noise = model(x, t, condition)
 
-                alpha = self.alpha[t][:, None, None, None]
                 alpha_hat = self.alpha_hat[t][:, None, None, None]
-                beta = self.beta[t][:, None, None, None]
+                alpha_hat_next = self.alpha_hat[t_next][:, None, None, None]
 
-                if i > 0:
-                    noise = torch.randn_like(x)
-                else:
-                    noise = torch.zeros_like(x)
+                # DDIM 公式：預測 x0
+                pred_x0 = (x - torch.sqrt(1 - alpha_hat) * predicted_noise) / torch.sqrt(alpha_hat)
 
-                # DDPM 標準採樣公式
-                x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * noise
+                # 計算下一個步驟的 x_t_next
+                x = torch.sqrt(alpha_hat_next) * pred_x0 + torch.sqrt(1 - alpha_hat_next) * predicted_noise
 
         model.train()
-        # 限制在 [-1, 1] 確保與訓練資料分布一致
         return x.clamp(-1, 1)

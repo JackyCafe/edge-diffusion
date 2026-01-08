@@ -61,7 +61,7 @@ def save_sample_images(imgs, masks, edges, fake_edges, save_path):
     img_g = (img_g + 1) / 2
     img_masked = (img_masked + 1) / 2
 
-    plt.figure(figsize=(20, 4))
+    plt.figure(figsize=(25, 4))
     titles = ["Original Gray", "Mask", "Masked Input", "GT Edge", "Generated Edge"]
     images = [img_g, img_m, img_masked, img_edge_gt, img_edge_fake]
 

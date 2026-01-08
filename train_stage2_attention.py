@@ -25,10 +25,12 @@ SAMPLE_DIR = "samples_stage2_results"
 LOG_DIR = "runs/stage2_attention_final"
 
 # 使用您最新的 IoU 峰值權重 (Epoch 75/80)
-G1_CHECKPOINT = "./checkpoints/G1_epoch_80.pth"
+G1_CHECKPOINT = "./checkpoints_sa/G1_SA_epoch_81.pth"
 
 W_RECON = 1.0
 W_VGG = 0.1
+
+
 # =====================================================
 
 def calculate_psnr(pred, target):

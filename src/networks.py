@@ -2,7 +2,34 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.spectral_norm as spectral_norm
 import math
+from torchvision import models
 
+
+
+
+class AttentionBlock(nn.Module):
+    def __init__(self, channels, heads=4):
+        super().__init__()
+        self.heads = heads
+        self.scale = (channels // heads) ** -0.5
+        self.to_qkv = nn.Conv2d(channels, channels * 3, 1, bias=False)
+        self.to_out = nn.Conv2d(channels, channels, 1)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        q, k, v = self.to_qkv(x).chunk(3, dim=1)
+
+        # 轉為 [B, Heads, H*W, Dim_head] 進行矩陣運算
+        q, k, v = map(lambda t: t.view(b, self.heads, c // self.heads, h * w).transpose(-1, -2), (q, k, v))
+
+        # 計算全域熱力圖 (Attention Map)
+        sim = torch.einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+        attn = sim.softmax(dim=-1)
+
+        # 特徵加權與還原尺寸
+        out = torch.einsum('b h i j, b h j d -> b h i d', attn, v)
+        out = out.transpose(-1, -2).reshape(b, c, h, w)
+        return x + self.to_out(out)
 # ==========================================
 #        共用組件
 # ==========================================
@@ -240,35 +267,30 @@ class DiffusionUNet(nn.Module):
     def __init__(self, in_channels=8, out_channels=3, time_dim=256):
         super().__init__()
         self.time_dim = time_dim
-
-        # 1. 補上缺失的時間嵌入層 (Time MLP)
         self.time_mlp = nn.Sequential(
             TimeEmbedding(dim=time_dim),
             nn.Linear(time_dim, time_dim),
             nn.SiLU(),
-            nn.Linear(time_dim, time_dim),
+            nn.Linear(time_dim, time_dim)
         )
 
-        # 2. Encoder (Downsampling 路徑)
-        # Input: RGB(3) + Masked_Img(3) + Mask(1) + Edge(1) = 8
+        # Encoder
         self.inc = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
-        self.down1 = DiffBlock(64, 128, self.time_dim, mode="down")  # 512 -> 256
-        self.down2 = DiffBlock(128, 256, self.time_dim, mode="down") # 256 -> 128
-        self.down3 = DiffBlock(256, 512, self.time_dim, mode="down") # 128 -> 64
-        self.down4 = DiffBlock(512, 512, self.time_dim, mode="down") # 64 -> 32
+        self.down1 = DiffBlock(64, 128, time_dim, mode="down")
+        self.down2 = DiffBlock(128, 256, time_dim, mode="down")
+        self.down3 = DiffBlock(256, 512, time_dim, mode="down")
+        self.down4 = DiffBlock(512, 512, time_dim, mode="down")
 
-        # 3. Middle (Bottleneck)
-        self.mid = DiffBlock(512, 512, self.time_dim, mode=None)     # 保持 32x32
+        # Bottleneck (加入 Attention 以優化 FID)
+        self.mid = DiffBlock(512, 512, time_dim)
+        self.mid_attn = AttentionBlock(512)
 
-        # 4. Decoder (Upsampling 路徑)
-        # 注意: in_ch 必須包含 cat 之後的通道數
-        self.up1 = DiffBlock(1024, 512, self.time_dim, mode="up")    # 32 -> 64
-        self.up2 = DiffBlock(1024, 256, self.time_dim, mode="up")    # 64 -> 128
-        self.up3 = DiffBlock(512, 128, self.time_dim, mode="up")     # 128 -> 256
-        self.up4 = DiffBlock(256, 64, self.time_dim, mode="up")      # 256 -> 512
+        # Decoder
+        self.up1 = DiffBlock(1024, 512, time_dim, mode="up")
+        self.up2 = DiffBlock(1024, 256, time_dim, mode="up")
+        self.up3 = DiffBlock(512, 128, time_dim, mode="up")
+        self.up4 = DiffBlock(256, 64, time_dim, mode="up")
 
-        # 5. Final Output
-        # 這裡拼接最初的 inc 特徵 (64 + 64 = 128)
         self.outc = nn.Sequential(
             nn.Conv2d(128, 64, kernel_size=3, padding=1),
             nn.SiLU(),
@@ -276,31 +298,67 @@ class DiffusionUNet(nn.Module):
         )
 
     def forward(self, x, t, condition):
-        # x: [B, 3, 512, 512] (含有雜訊的影像)
-        # t: [B] (時間步數)
-        # condition: [B, 5, 512, 512]
-
-        # A. 先計算時間嵌入向量
         t_emb = self.time_mlp(t)
+        x = torch.cat([x, condition], dim=1) # 合併 Edge Map 導引資訊
 
-        # B. 將雜訊影像與條件拼接
-        x = torch.cat([x, condition], dim=1) # [B, 8, 512, 512]
-
-        # C. Encoder
         x1 = self.inc(x)
         x2 = self.down1(x1, t_emb)
         x3 = self.down2(x2, t_emb)
         x4 = self.down3(x3, t_emb)
         x5 = self.down4(x4, t_emb)
 
-        # D. Middle
         m = self.mid(x5, t_emb)
+        m = self.mid_attn(m) # 執行全域特徵對齊
 
-        # E. Decoder with Skip Connections (拼接對應層級的特徵)
         x = self.up1(torch.cat([m, x5], dim=1), t_emb)
         x = self.up2(torch.cat([x, x4], dim=1), t_emb)
         x = self.up3(torch.cat([x, x3], dim=1), t_emb)
         x = self.up4(torch.cat([x, x2], dim=1), t_emb)
-
-        # F. Final output
         return self.outc(torch.cat([x, x1], dim=1))
+
+
+class Discriminator(nn.Module):
+    """ PatchGAN 判別器：用於 150 Epoch 後的細節強化 """
+    def __init__(self):
+        super().__init__()
+        def conv_block(in_f, out_f, stride=2):
+            return nn.Sequential(
+                nn.utils.spectral_norm(nn.Conv2d(in_f, out_f, 4, stride, 1)),
+                nn.LeakyReLU(0.2, inplace=True)
+            )
+        self.model = nn.Sequential(
+            conv_block(3, 64), conv_block(64, 128), conv_block(128, 256),
+            conv_block(256, 512, stride=1), nn.Conv2d(512, 1, 4, 1, 1)
+        )
+    def forward(self, x): return self.model(x)
+
+
+"""
+class VGGLoss(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        vgg = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1).features
+        self.vgg = vgg[:19].to(device).eval()
+        for param in self.vgg.parameters(): param.requires_grad = False
+    def forward(self, pred, target):
+        p, t = (pred + 1) / 2, (target + 1) / 2
+        px, tx = self.vgg(p), self.vgg(t)
+        return F.l1_loss(px, tx)
+"""
+class VGGLoss(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        vgg = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1).features
+        self.vgg = vgg.to(device).eval()
+        for param in self.vgg.parameters():
+            param.requires_grad = False
+        self.content_layers = [4, 9, 18, 27]
+
+    def forward(self, pred, target):
+        p, t = (pred + 1) / 2, (target + 1) / 2
+        loss = 0
+        for i, layer in enumerate(self.vgg):
+            p, t = layer(p), layer(t)
+            if i in self.content_layers:
+                loss += nn.functional.l1_loss(p, t)
+        return loss

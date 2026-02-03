@@ -13,11 +13,11 @@ from src.dataset import InpaintingDataset
 
 # ================= CONFIG =================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-CHECKPOINT_DIR = "checkpoints"
+CHECKPOINT_DIR = "checkpoints_sa"
 IMAGE_SIZE = 512
 BATCH_SIZE = 8
 # 這裡設定您想評估的 Epoch 列表，例如每 5 個 Epoch 評估一次
-EPOCHS_TO_EVAL = range(0, 100, 5)
+EPOCHS_TO_EVAL = range(0,80, 5)
 # ==========================================
 
 def calculate_iou(pred, target, threshold=0.5):
@@ -43,7 +43,7 @@ def evaluate_g1():
 
     # 2. 遍歷指定 Epoch
     for epoch in EPOCHS_TO_EVAL:
-        ckpt_path = f"{CHECKPOINT_DIR}/G1_epoch_{epoch}.pth"
+        ckpt_path = f"{CHECKPOINT_DIR}/G1_SA_epoch_{epoch}.pth"
         if not os.path.exists(ckpt_path):
             print(f"[!] Skip Epoch {epoch}: Checkpoint not found.")
             continue

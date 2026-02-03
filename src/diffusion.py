@@ -5,48 +5,45 @@ class DiffusionManager:
         self.noise_steps = noise_steps
         self.device = device
 
+        # 定義線性噪聲排程
         self.beta = torch.linspace(beta_start, beta_end, noise_steps).to(device)
         self.alpha = 1. - self.beta
         self.alpha_hat = torch.cumprod(self.alpha, dim=0)
 
     def noise_images(self, x, t):
+        """ 訓練時的前向加噪過程 """
         sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])[:, None, None, None]
         sqrt_one_minus_alpha_hat = torch.sqrt(1 - self.alpha_hat[t])[:, None, None, None]
         epsilon = torch.randn_like(x)
         return sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * epsilon, epsilon
 
     def sample_timesteps(self, n):
+        """ 隨機採樣時間步 """
         return torch.randint(low=1, high=self.noise_steps, size=(n,), device=self.device)
 
     def sample(self, model, condition, n, steps=50):
-        """
-        支援 DDIM 快速採樣邏輯
-        steps: 採樣疊代步數。
-        """
         model.eval()
         with torch.no_grad():
-            # 初始噪聲
             x = torch.randn((n, 3, condition.shape[2], condition.shape[3])).to(self.device)
-
-            # 定義 DDIM 跳步序列
             times = torch.linspace(self.noise_steps - 1, 0, steps + 1).long().to(self.device)
 
             for i in range(steps):
-                # 修正處：確保 torch.ones(n) 在建立時即指定 device
                 t = (torch.ones(n, device=self.device) * times[i]).long()
                 t_next = (torch.ones(n, device=self.device) * times[i+1]).long()
 
-                # 預測噪聲
                 predicted_noise = model(x, t, condition)
+                # [防線 1] 限制噪聲預測範圍
+                predicted_noise = torch.clamp(predicted_noise, -1.5, 1.5)
 
                 alpha_hat = self.alpha_hat[t][:, None, None, None]
                 alpha_hat_next = self.alpha_hat[t_next][:, None, None, None]
 
-                # DDIM 公式：預測 x0
-                pred_x0 = (x - torch.sqrt(1 - alpha_hat) * predicted_noise) / torch.sqrt(alpha_hat)
+                # [防線 2] 鎖定分母最小值，防止數值爆炸
+                safe_sqrt_alpha = torch.sqrt(alpha_hat).clamp(min=0.2)
 
-                # 計算下一個步驟的 x_t_next
+                pred_x0 = (x - torch.sqrt(1 - alpha_hat) * predicted_noise) / safe_sqrt_alpha
+                pred_x0 = torch.clamp(pred_x0, -1, 1)
+
                 x = torch.sqrt(alpha_hat_next) * pred_x0 + torch.sqrt(1 - alpha_hat_next) * predicted_noise
-
         model.train()
-        return x.clamp(-1, 1)
+        return x.clamp(-1.5, 1.5)

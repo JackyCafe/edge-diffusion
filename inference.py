@@ -15,9 +15,9 @@ from src.dataset import InpaintingDataset
 # ================= CONFIG (優化配置) =================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G1_PATH = "./checkpoints_sa/G1_SA_epoch_81.pth"
-G2_PATH = "./checkpoints_stage2_sa/G2_latest.pth"
+G2_PATH = "./checkpoints_stage2/G2_latest.pth"
 TEST_DIR = "./datasets/img"
-RESULT_DIR = "./diffusion_result"
+RESULT_DIR = "./diffusion_result_ca"
 IMG_SIZE = 512
 BATCH_SIZE = 8  # 增加 Batch Size 以提升 GPU 利用率
 SAMPLING_STEPS = 50  # 使用 50 步 DDIM

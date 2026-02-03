@@ -2,6 +2,8 @@ from curses import raw
 import torch
 from torchvision.utils import save_image
 import matplotlib.pyplot as plt
+import numpy as np
+import torch.nn.functional as F
 
 def compute_psnr(img1, img2):
     """
@@ -127,3 +129,29 @@ def save_diffusion_samples(v_imgs, v_masks, v_edges, v_final, save_path):
     plt.savefig(save_path)
     plt.close()
     print(f"Sample saved: {save_path}")
+
+
+
+
+def save_preview_image(imgs, masks, edges, results, psnr_val, epoch, save_dir):
+    imgs_np = (imgs.cpu().permute(0, 2, 3, 1).numpy() + 1) / 2
+    masks_np = masks.cpu().permute(0, 2, 3, 1).numpy()
+    edges_np = edges.cpu().permute(0, 2, 3, 1).numpy()
+    res_np = (results.cpu().permute(0, 2, 3, 1).numpy() + 1) / 2
+    fig, axes = plt.subplots(1, 5, figsize=(30, 5))
+    titles = ["Original", "Mask", "Edge Guide", "Masked Input", f"Res (PSNR:{psnr_val:.2f})"]
+    data = [imgs_np[0], masks_np[0,:,:,0], edges_np[0,:,:,0], imgs_np[0]*(1-masks_np[0]), res_np[0]]
+    for ax, d, t in zip(axes, data, titles):
+        ax.imshow(np.clip(d, 0, 1), cmap='gray' if len(d.shape)==2 else None)
+        ax.set_title(t, fontsize=10); ax.axis('off')
+    plt.tight_layout(); plt.savefig(f"{save_dir}/v13_ep{epoch:03d}.png"); plt.close()
+
+def manual_ssim(img1, img2, window_size=11):
+    """ 手動實現 SSIM 避免依賴問題 """
+    C1, C2 = 0.01**2, 0.03**2
+    mu1 = F.avg_pool2d(img1, window_size, stride=1, padding=window_size//2)
+    mu2 = F.avg_pool2d(img2, window_size, stride=1, padding=window_size//2)
+    sigma12 = F.avg_pool2d(img1 * img2, window_size, stride=1, padding=window_size//2) - (mu1 * mu2)
+    sigma1_sq = F.avg_pool2d(img1**2, window_size, stride=1, padding=window_size//2) - mu1**2
+    sigma2_sq = F.avg_pool2d(img2**2, window_size, stride=1, padding=window_size//2) - mu2**2
+    return (((2 * mu1 * mu2 + C1) * (2 * sigma12 + C2)) / ((mu1**2 + mu2**2 + C1) * (sigma1_sq + sigma2_sq + C2))).mean()

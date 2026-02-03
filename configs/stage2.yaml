@@ -1,0 +1,43 @@
+# configs/stage2_v14.yaml
+
+device: "cuda"
+seed: 0
+
+paths:
+  save_dir: "checkpoints_stage2_v14_ultimate"
+  sample_dir: "samples_stage2_v14_ultimate"
+  log_dir: "runs/stage2_v14_ultimate"
+  g1_checkpoint: "./checkpoints_sa/G1_latest.pth"
+  load_g2_path: "checkpoints_stage2_v14_ultimate/checkpoint_latest.pth"
+
+data:
+  train_root: "./datasets/img"
+  batch_size: 4
+  num_workers: 12
+  pin_memory: true
+  shuffle: true
+
+train:
+  epochs: 200
+  pure_epochs: 50
+  accumulation_steps: 4
+  base_lr: 2.0e-5
+  d_lr: 1.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 0.3
+  w_adv_final: 0.005
+
+  # 監控/紀錄頻率
+  log_step_every: 10          # 每幾 step 寫 scalar（建議 10）
+  tb_image_every: 300         # 每幾 step 寫 preview images
+  triple_axis_plot_every: 50  # 三軸圖多久畫一次
+
+metrics:
+  assume_range: "neg1_1"      # 你的 pred_x0/imgs 都是 [-1,1]
+  ssim_mode: "masked_bbox"    # "full" 或 "masked_bbox"
+  eps: 1.0e-8
+
+sampling:
+  steps: 100
+  baseline_epoch: 149
+  baseline_dir: "baseline_samples"

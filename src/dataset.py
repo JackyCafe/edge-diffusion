@@ -95,6 +95,7 @@ class InpaintingDataset(Dataset):
             # 2. 轉換與正規化
             img_t = self.transform(img)
             edge_t = transforms.ToTensor()(transforms.Resize((self.img_size, self.img_size))(edge)) # Edge [0, 1]
+            edge_t = edge_t * 2.0 - 1.0  # 從 [0, 1] 轉為 [-1, 1]
 
             # 3. 產生 Mask
             mask = self.load_mask(self.img_size, self.img_size)

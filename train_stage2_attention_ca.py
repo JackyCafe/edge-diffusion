@@ -16,7 +16,7 @@ import numpy as np
 from src.networks import EdgeGenerator, DiffusionUNet, Discriminator, VGGLoss
 from src.diffusion import DiffusionManager
 from src.dataset import InpaintingDataset
-from src.utils import manual_ssim, save_preview_image
+from src.misc import manual_ssim, save_preview_image
 
 # ================= CONFIG (多卡並行與穩定性優化) =================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

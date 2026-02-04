@@ -13,7 +13,7 @@ import numpy as np
 from src.networks import EdgeGenerator, DiffusionUNet, Discriminator, VGGLoss
 from src.diffusion import DiffusionManager
 from src.dataset import InpaintingDataset
-from src.utils import manual_ssim, save_preview_image
+from src.misc import manual_ssim, save_preview_image
 
 # ================= CONFIG =================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

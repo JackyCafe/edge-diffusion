@@ -30,7 +30,10 @@ train:
   # 監控/紀錄頻率
   log_step_every: 10          # 每幾 step 寫 scalar（建議 10）
   tb_image_every: 300         # 每幾 step 寫 preview images
-  triple_axis_plot_every: 50  # 三軸圖多久畫一次
+  dashboard_png_every: 500     # 每幾 step 產生一次大 PNG
+  dashboard_maxlen: 8000
+  dashboard_keep_every: 500    # 每幾 step 另外保存一張 step 版（0=不保存）
+  dashboard_dir: "runs/stage2_v14_ultimate/dashboard"  # 大 PNG 輸出資料夾
 
 metrics:
   assume_range: "neg1_1"      # 你的 pred_x0/imgs 都是 [-1,1]

@@ -11,7 +11,7 @@ from tqdm import tqdm
 # 引入專案模組 (請確保路徑正確)
 from src.networks import EdgeGenerator, EdgeDiscriminator
 from src.dataset import InpaintingDataset
-from src.utils import save_sample_images
+from src.misc import save_sample_images
 
 # =========================================
 #                CONFIG 設定

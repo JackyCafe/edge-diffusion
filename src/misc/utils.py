@@ -144,7 +144,7 @@ def save_preview_image(imgs, masks, edges, results, psnr_val, epoch, save_dir):
     for ax, d, t in zip(axes, data, titles):
         ax.imshow(np.clip(d, 0, 1), cmap='gray' if len(d.shape)==2 else None)
         ax.set_title(t, fontsize=10); ax.axis('off')
-    plt.tight_layout(); plt.savefig(f"{save_dir}/v13_ep{epoch:03d}.png"); plt.close()
+    plt.tight_layout(); plt.savefig(f"{save_dir}"); plt.close()
 
 def manual_ssim(img1, img2, window_size=11):
     """ 手動實現 SSIM 避免依賴問題 """

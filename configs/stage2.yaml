@@ -21,19 +21,19 @@ train:
   epochs: 200
   pure_epochs: 50
   accumulation_steps: 4
-  base_lr: 2.0e-5
+  base_lr: 1.0e-5
   d_lr: 1.0e-4
   weight_decay: 1.0e-4
   grad_clip: 0.3
   w_adv_final: 0.005
 
   # 監控/紀錄頻率
-  log_step_every: 10          # 每幾 step 寫 scalar（建議 10）
-  tb_image_every: 300         # 每幾 step 寫 preview images
-  dashboard_png_every: 500     # 每幾 step 產生一次大 PNG
-  dashboard_maxlen: 8000
-  dashboard_keep_every: 500    # 每幾 step 另外保存一張 step 版（0=不保存）
-  dashboard_dir: "runs/stage2_v14_ultimate/dashboard"  # 大 PNG 輸出資料夾
+  # log_step_every: 10          # 每幾 step 寫 scalar（建議 10）
+  # tb_image_every: 300         # 每幾 step 寫 preview images
+  # dashboard_png_every: 500     # 每幾 step 產生一次大 PNG
+  # dashboard_maxlen: 8000
+  # dashboard_keep_every: 500    # 每幾 step 另外保存一張 step 版（0=不保存）
+  # dashboard_dir: "runs/stage2_v14_ultimate/dashboard"  # 大 PNG 輸出資料夾
 
 metrics:
   assume_range: "neg1_1"      # 你的 pred_x0/imgs 都是 [-1,1]
@@ -41,6 +41,6 @@ metrics:
   eps: 1.0e-8
 
 sampling:
-  steps: 100
+  steps: 30
   baseline_epoch: 149
   baseline_dir: "baseline_samples"

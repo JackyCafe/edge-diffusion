@@ -299,7 +299,22 @@ class DiffusionUNet(nn.Module):
 
     def forward(self, x, t, condition):
         t_emb = self.time_mlp(t)
-        x = torch.cat([x, condition], dim=1) # 合併 Edge Map 導引資訊
+        # --- 優化建議：淨化邊緣圖 (Edge Cleaning) ---
+        # 1. 提高門檻值：只保留信心度高的邊緣 (例如 > 0.7)
+        # 2. 或是使用高斯模糊來減少細碎的高頻噪點
+        # condition = torch.where(condition > 0.7, condition, torch.zeros_like(condition))
+        masked_rgb = condition[:, :3]
+        mask = condition[:, 3:4]
+        edge= condition[:, 4:5]
+        # edge = (edge > 0.7).float() * edge  # 只清 edge
+        edge = edge * torch.sigmoid(10 * (edge - 0.7))
+        cond = torch.cat([masked_rgb, mask, edge], dim=1)
+        x = torch.cat([x, cond], dim=1)
+
+        # 可選：如果邊緣還是太碎，加入一個簡單的池化或模糊
+        # condition = F.avg_pool2d(condition, kernel_size=3, stride=1, padding=1)
+        
+        # x = torch.cat([x, condition], dim=1)
 
         x1 = self.inc(x)
         x2 = self.down1(x1, t_emb)
@@ -333,18 +348,7 @@ class Discriminator(nn.Module):
     def forward(self, x): return self.model(x)
 
 
-"""
-class VGGLoss(nn.Module):
-    def __init__(self, device):
-        super().__init__()
-        vgg = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1).features
-        self.vgg = vgg[:19].to(device).eval()
-        for param in self.vgg.parameters(): param.requires_grad = False
-    def forward(self, pred, target):
-        p, t = (pred + 1) / 2, (target + 1) / 2
-        px, tx = self.vgg(p), self.vgg(t)
-        return F.l1_loss(px, tx)
-"""
+
 class VGGLoss(nn.Module):
     def __init__(self, device):
         super().__init__()
@@ -352,13 +356,24 @@ class VGGLoss(nn.Module):
         self.vgg = vgg.to(device).eval()
         for param in self.vgg.parameters():
             param.requires_grad = False
+        # 關鍵：ImageNet 標準化常數
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(device))
+        self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(device))
         self.content_layers = [4, 9, 18, 27]
 
     def forward(self, pred, target):
         p, t = (pred + 1) / 2, (target + 1) / 2
+        p = (p - self.mean) / self.std
+        t = (t - self.mean) / self.std
         loss = 0
+        max_i = max(self.content_layers)
+
         for i, layer in enumerate(self.vgg):
             p, t = layer(p), layer(t)
             if i in self.content_layers:
                 loss += nn.functional.l1_loss(p, t)
+            if i >= max_i:  # 提前結束，節省計算
+                break
         return loss
+
+   

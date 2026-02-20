@@ -4,11 +4,11 @@ device: "cuda"
 seed: 0
 
 paths:
-  save_dir: "checkpoints_stage2_v14_ultimate"
-  sample_dir: "samples_stage2_v14_ultimate"
-  log_dir: "runs/stage2_v14_ultimate"
+  save_dir: "checkpoints_stage2_v19_ultimate"
+  sample_dir: "samples_stage2_v19_ultimate"
+  log_dir: "runs/stage2_v19_ultimate"
   g1_checkpoint: "./checkpoints_sa/G1_latest.pth"
-  load_g2_path: "checkpoints_stage2_v14_ultimate/checkpoint_latest.pth"
+  load_g2_path: "checkpoints_stage2_v19_ultimate/checkpoint_latest.pth"
 
 data:
   train_root: "./datasets/img"
@@ -18,10 +18,10 @@ data:
   shuffle: true
 
 train:
-  epochs: 200
+  epochs: 300
   pure_epochs: 50
   accumulation_steps: 4
-  base_lr: 1.0e-5
+  base_lr: 5.0e-6
   d_lr: 1.0e-4
   weight_decay: 1.0e-4
   grad_clip: 0.3

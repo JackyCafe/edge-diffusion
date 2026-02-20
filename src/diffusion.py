@@ -47,3 +47,4 @@ class DiffusionManager:
                 x = torch.sqrt(alpha_hat_next) * pred_x0 + torch.sqrt(1 - alpha_hat_next) * predicted_noise
         model.train()
         return x.clamp(-1.5, 1.5)
+    

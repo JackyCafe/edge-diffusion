@@ -11,6 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 # =========================
@@ -138,6 +139,33 @@ def gray_consistency_loss(x: torch.Tensor, masks: torch.Tensor, w: float) -> tor
     loss = (masked_l1(r, g, masks) + masked_l1(r, b, masks) + masked_l1(g, b, masks)) / 3.0
     return loss * w
 
+def color_consistency_tools(pred, target, mask):
+    """
+    1. 統計一致性：防止發灰、過暗或過亮
+    2. 灰度結構：確保物體輪廓與光影正確
+    """
+    # 將 pred/target 從 [-1, 1] 轉至 [0, 1] 以利計算統計量
+    p = (pred + 1) / 2
+    t = (target + 1) / 2
+    m = mask
+    
+    # --- (A) Mean & Std Loss (統計約束) ---
+    # 只計算 Mask 區域內的通道均值與標準差
+    p_mean = (p * m).sum(dim=(2,3)) / (m.sum(dim=(2,3)) + 1e-6)
+    t_mean = (t * m).sum(dim=(2,3)) / (m.sum(dim=(2,3)) + 1e-6)
+    
+    loss_stats = F.mse_loss(p_mean, t_mean)
+    
+    # --- (B) Grayscale Consistency (灰度約束) ---
+    # 使用標準權重轉灰度，防止色彩偏移影響亮度判斷
+    def to_gray(x):
+        return 0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.114 * x[:, 2:3]
+    
+    p_gray = to_gray(p)
+    t_gray = to_gray(t)
+    loss_gray_struct = F.l1_loss(p_gray * m, t_gray * m)
+    
+    return loss_stats, loss_gray_struct
 
 
 # =========================
@@ -370,3 +398,21 @@ def plot_ieee_dashboard(
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=300)
     plt.close(fig)
+
+
+def safe_moving_average(values, window=5):
+    values = np.asarray(values, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    if len(values) == 0: return None
+    w = int(min(window, len(values)))
+    if w <= 1: return values
+    kernel = np.ones(w) / w
+    return np.convolve(values, kernel, mode='valid')
+
+
+def masked_color_loss(pred, real, mask):
+    # 提取 Mask 區域的 RGB 均值
+    pred_mean = torch.mean(pred * mask, dim=(2,3)) / (torch.mean(mask) + 1e-6)
+    real_mean = torch.mean(real * mask, dim=(2,3)) / (torch.mean(mask) + 1e-6)
+    # 強制兩者均值接近
+    return F.mse_loss(pred_mean, real_mean)
